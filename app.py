@@ -1,16 +1,15 @@
 import tempfile
+import os
+from pathlib import Path
 import streamlit as st
 from langchain.memory import ConversationBufferMemory
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
-
 from loaders import carrega_site, carrega_youtube, carrega_pdf, carrega_csv, carrega_txt
 
-# -----------------------------
-# Configurações
-# -----------------------------
-TIPOS_ARQUIVOS_VALIDOS = ['Site', 'Youtube', 'Pdf', 'Csv', 'Txt']
+# ---------------- Configurações ----------------
+TIPOS_ARQUIVOS_VALIDOS = ['Site', 'Youtube', 'Pdf', 'Csv', 'Txt', 'Pasta']
 
 CONFIG_MODELOS = {
     'Groq': {
@@ -23,49 +22,28 @@ CONFIG_MODELOS = {
     }
 }
 
-# Memória de conversa
 MEMORIA = ConversationBufferMemory()
 
-
-# -----------------------------
-# Funções utilitárias
-# -----------------------------
-def carrega_arquivos(tipo_arquivo: str, arquivo):
-    """
-    Recebe o tipo de entrada e o valor do widget correspondente.
-    Retorna o conteúdo do documento como string.
-    """
+# ---------------- Funções auxiliares ----------------
+def carrega_arquivos(tipo_arquivo, arquivo):
     if not arquivo:
-        st.warning("Nenhum conteúdo informado. Selecione/insira um arquivo, site ou link do YouTube.")
+        st.warning("Nenhum conteúdo informado.")
         return None
 
-    # Entrada como URL de site
+    # Site
     if tipo_arquivo == 'Site':
-        if not isinstance(arquivo, str):
-            st.error("Para 'Site', informe uma URL válida (texto).")
-            return None
         return carrega_site(arquivo)
 
-    # Entrada como URL do YouTube
+    # Youtube
     if tipo_arquivo == 'Youtube':
-        if not isinstance(arquivo, str):
-            st.error("Para 'Youtube', informe a URL do vídeo.")
-            return None
         return carrega_youtube(arquivo)
 
-    # Uploads: Pdf, Csv, Txt
+    # PDF / CSV / TXT (uploads)
     if tipo_arquivo in ['Pdf', 'Csv', 'Txt']:
-        # st.file_uploader retorna UploadedFile com .getbuffer()
-        # (compatível com Streamlit 1.38)
         try:
             data = arquivo.getbuffer()
         except Exception:
-            # fallback raro
-            if hasattr(arquivo, "read"):
-                data = arquivo.read()
-            else:
-                st.error("Arquivo inválido para upload.")
-                return None
+            data = arquivo.read()
 
         sufixos = {'Pdf': '.pdf', 'Csv': '.csv', 'Txt': '.txt'}
         sufixo = sufixos[tipo_arquivo]
@@ -81,32 +59,61 @@ def carrega_arquivos(tipo_arquivo: str, arquivo):
         if tipo_arquivo == 'Txt':
             return carrega_txt(caminho_temp)
 
+    # Pasta local
+    if tipo_arquivo == 'Pasta':
+        base = Path(arquivo).expanduser().resolve()
+        if not base.exists() or not base.is_dir():
+            st.error(f"Pasta não encontrada: {base}")
+            return None
+
+        exts = st.session_state.get('pasta_exts', ['pdf', 'csv', 'txt', 'md'])
+        recursivo = st.session_state.get('pasta_recursivo', True)
+        pattern = "**/*" if recursivo else "*"
+
+        arquivos = [p for p in base.glob(pattern)
+                    if p.is_file() and p.suffix.lower().lstrip('.') in exts]
+
+        if not arquivos:
+            st.warning("Nenhum arquivo encontrado nessa pasta.")
+            return None
+
+        documentos = []
+        for p in arquivos[:100]:  # limite de 100 arquivos
+            try:
+                suf = p.suffix.lower()
+                if suf == ".pdf":
+                    documentos.append(carrega_pdf(str(p)))
+                elif suf == ".csv":
+                    documentos.append(carrega_csv(str(p)))
+                elif suf in (".txt", ".md"):
+                    documentos.append(carrega_txt(str(p)))
+            except Exception as e:
+                st.warning(f"Falha ao ler {p.name}: {e}")
+
+        return "\n\n".join(documentos)
+
     st.error(f"Tipo de arquivo não suportado: {tipo_arquivo}")
     return None
 
 
-def carrega_modelo(provedor: str, modelo: str, api_key: str, tipo_arquivo: str, arquivo):
-    """
-    Monta o 'chain' com base no documento carregado e salva em session_state.
-    """
+def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
     documento = carrega_arquivos(tipo_arquivo, arquivo)
     if documento is None:
         return
 
     system_message = f"""Você é um assistente amigável chamado Max.
-Você possui acesso às seguintes informações vindas de um documento {tipo_arquivo}:
+    Você possui acesso às seguintes informações vindas de um documento {tipo_arquivo}:
 
-####
-{documento}
-####
+    ####
+    {documento}
+    ####
 
-Utilize as informações fornecidas para basear as suas respostas.
+    Utilize as informações fornecidas para basear as suas respostas.
 
-Sempre que houver $ na sua saída, substitua por S.
+    Sempre que houver $ na sua saída, substitua por S.
 
-Se a informação do documento for algo como "Just a moment...Enable JavaScript and cookies to continue"
-sugira ao usuário carregar novamente o Oráculo!
-"""
+    Se a informação do documento for algo como "Just a moment...Enable JavaScript and cookies to continue"
+    sugira ao usuário carregar novamente o Max!"""
 
     template = ChatPromptTemplate.from_messages([
         ('system', system_message),
@@ -114,14 +121,8 @@ sugira ao usuário carregar novamente o Oráculo!
         ('user', '{input}')
     ])
 
-    chat_cls = CONFIG_MODELOS[provedor]['chat']
-    chat = chat_cls(model=modelo, api_key=api_key)
-    chain = template | chat
-
-    st.session_state['chain'] = chain
-    # Mantém memória entre execuções
-    if 'memoria' not in st.session_state:
-        st.session_state['memoria'] = MEMORIA
+    chat = CONFIG_MODELOS[provedor]['chat'](model=modelo, api_key=api_key)
+    st.session_state['chain'] = template | chat
 
 
 def pagina_chat():
@@ -129,55 +130,50 @@ def pagina_chat():
 
     chain = st.session_state.get('chain')
     if chain is None:
-        st.info("Inicialize o Oráculo na barra lateral para começar.")
+        st.info("Inicialize o Max na barra lateral para começar.")
         return
 
-    memoria: ConversationBufferMemory = st.session_state.get('memoria', MEMORIA)
-
-    # Reexibir histórico
+    memoria = st.session_state.get('memoria', MEMORIA)
     for mensagem in memoria.buffer_as_messages:
-        chat = st.chat_message(mensagem.type)
-        chat.markdown(mensagem.content)
+        st.chat_message(mensagem.type).markdown(mensagem.content)
 
-    # Input do usuário + streaming da resposta
-    input_usuario = st.chat_input('Fale com o Max...')
+    input_usuario = st.chat_input('Pergunte ao Max...')
     if input_usuario:
         st.chat_message('human').markdown(input_usuario)
-
-        chat_ai = st.chat_message('ai')
-        resposta_stream = chain.stream({
+        resposta = st.chat_message('ai').write_stream(chain.stream({
             'input': input_usuario,
             'chat_history': memoria.buffer_as_messages
-        })
-        resposta_final = chat_ai.write_stream(resposta_stream)
-
+        }))
         memoria.chat_memory.add_user_message(input_usuario)
-        memoria.chat_memory.add_ai_message(resposta_final)
+        memoria.chat_memory.add_ai_message(resposta)
         st.session_state['memoria'] = memoria
 
 
 def sidebar():
     tabs = st.tabs(['Upload de Arquivos', 'Seleção de Modelos'])
-
-    # ----------- Aba 1: Upload / Entradas -----------
     with tabs[0]:
-        tipo_arquivo = st.selectbox('Selecione o tipo de entrada', TIPOS_ARQUIVOS_VALIDOS, index=0)
+        tipo_arquivo = st.selectbox('Selecione o tipo de entrada', TIPOS_ARQUIVOS_VALIDOS)
         arquivo = None
 
         if tipo_arquivo == 'Site':
             arquivo = st.text_input('Digite a URL do site')
         elif tipo_arquivo == 'Youtube':
-            arquivo = st.text_input('Digite a URL do vídeo do YouTube')
+            arquivo = st.text_input('Digite a URL do vídeo')
         elif tipo_arquivo == 'Pdf':
-            arquivo = st.file_uploader('Faça o upload do arquivo PDF', type=['pdf'])
+            arquivo = st.file_uploader('Faça o upload do PDF', type=['pdf'])
         elif tipo_arquivo == 'Csv':
-            arquivo = st.file_uploader('Faça o upload do arquivo CSV', type=['csv'])
+            arquivo = st.file_uploader('Faça o upload do CSV', type=['csv'])
         elif tipo_arquivo == 'Txt':
-            arquivo = st.file_uploader('Faça o upload do arquivo TXT', type=['txt'])
+            arquivo = st.file_uploader('Faça o upload do TXT', type=['txt'])
+        elif tipo_arquivo == 'Pasta':
+            arquivo = st.text_input('Digite o caminho da pasta (ex.: C:\\dados ou /home/ubuntu/dados)')
+            recursivo = st.checkbox('Ler subpastas recursivamente', value=True)
+            padrao = st.text_input('Extensões a considerar (separe por vírgula)', value='pdf,csv,txt,md')
+            st.session_state['pasta_recursivo'] = recursivo
+            st.session_state['pasta_exts'] = [e.strip().lower() for e in padrao.split(',') if e.strip()]
 
-    # ----------- Aba 2: Modelos -----------
     with tabs[1]:
-        provedor = st.selectbox('Selecione o provedor do modelo', list(CONFIG_MODELOS.keys()))
+        provedor = st.selectbox('Selecione o provedor do modelo', CONFIG_MODELOS.keys())
         modelo = st.selectbox('Selecione o modelo', CONFIG_MODELOS[provedor]['modelos'])
         api_key = st.text_input(
             f'Adicione a API key do provedor {provedor}',
@@ -185,32 +181,18 @@ def sidebar():
         )
         st.session_state[f'api_key_{provedor}'] = api_key
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button('Inicializar Oráculo', use_container_width=True):
-            if not api_key:
-                st.error("Informe sua API key para prosseguir.")
-            else:
-                carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
+    if st.button('Inicializar Max', use_container_width=True):
+        carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
 
-    with col2:
-        if st.button('Apagar Histórico de Conversa', use_container_width=True):
-            st.session_state['memoria'] = MEMORIA
-            st.success("Histórico apagado.")
-
-    return  # nada explícito a retornar
+    if st.button('Apagar Histórico de Conversa', use_container_width=True):
+        st.session_state['memoria'] = MEMORIA
 
 
 def main():
-    # Barra lateral primeiro (escolhas ficam salvas antes do chat renderizar)
     with st.sidebar:
         sidebar()
-
-    # Área principal do chat
     pagina_chat()
 
 
 if __name__ == '__main__':
     main()
-
-
