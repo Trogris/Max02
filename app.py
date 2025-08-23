@@ -93,7 +93,7 @@ def carrega_modelo(provedor: str, modelo: str, api_key: str, tipo_arquivo: str, 
     if documento is None:
         return
 
-    system_message = f"""Você é um assistente amigável chamado Oráculo.
+    system_message = f"""Você é um assistente amigável chamado Max.
 Você possui acesso às seguintes informações vindas de um documento {tipo_arquivo}:
 
 ####
@@ -125,7 +125,7 @@ sugira ao usuário carregar novamente o Oráculo!
 
 
 def pagina_chat():
-    st.header('🤖 Bem-vindo ao Oráculo', divider=True)
+    st.header('🤖 Max, seu assistente virtual na Fiscaltech', divider=True)
 
     chain = st.session_state.get('chain')
     if chain is None:
@@ -140,7 +140,7 @@ def pagina_chat():
         chat.markdown(mensagem.content)
 
     # Input do usuário + streaming da resposta
-    input_usuario = st.chat_input('Fale com o Oráculo...')
+    input_usuario = st.chat_input('Fale com o Max...')
     if input_usuario:
         st.chat_message('human').markdown(input_usuario)
 
@@ -212,3 +212,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
