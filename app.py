@@ -1,6 +1,4 @@
 import tempfile
-import os
-from pathlib import Path
 import streamlit as st
 from langchain.memory import ConversationBufferMemory
 from langchain_groq import ChatGroq
@@ -9,7 +7,7 @@ from langchain.prompts import ChatPromptTemplate
 from loaders import carrega_site, carrega_youtube, carrega_pdf, carrega_csv, carrega_txt
 
 # ---------------- Configurações ----------------
-TIPOS_ARQUIVOS_VALIDOS = ['Site', 'Youtube', 'Pdf', 'Csv', 'Txt', 'Pasta']
+TIPOS_ARQUIVOS_VALIDOS = ['Site', 'Youtube', 'Pdf', 'Csv', 'Txt']
 
 CONFIG_MODELOS = {
     'Groq': {
@@ -58,39 +56,6 @@ def carrega_arquivos(tipo_arquivo, arquivo):
             return carrega_csv(caminho_temp)
         if tipo_arquivo == 'Txt':
             return carrega_txt(caminho_temp)
-
-    # Pasta local
-    if tipo_arquivo == 'Pasta':
-        base = Path(arquivo).expanduser().resolve()
-        if not base.exists() or not base.is_dir():
-            st.error(f"Pasta não encontrada: {base}")
-            return None
-
-        exts = st.session_state.get('pasta_exts', ['pdf', 'csv', 'txt', 'md'])
-        recursivo = st.session_state.get('pasta_recursivo', True)
-        pattern = "**/*" if recursivo else "*"
-
-        arquivos = [p for p in base.glob(pattern)
-                    if p.is_file() and p.suffix.lower().lstrip('.') in exts]
-
-        if not arquivos:
-            st.warning("Nenhum arquivo encontrado nessa pasta.")
-            return None
-
-        documentos = []
-        for p in arquivos[:100]:  # limite de 100 arquivos
-            try:
-                suf = p.suffix.lower()
-                if suf == ".pdf":
-                    documentos.append(carrega_pdf(str(p)))
-                elif suf == ".csv":
-                    documentos.append(carrega_csv(str(p)))
-                elif suf in (".txt", ".md"):
-                    documentos.append(carrega_txt(str(p)))
-            except Exception as e:
-                st.warning(f"Falha ao ler {p.name}: {e}")
-
-        return "\n\n".join(documentos)
 
     st.error(f"Tipo de arquivo não suportado: {tipo_arquivo}")
     return None
@@ -165,12 +130,6 @@ def sidebar():
             arquivo = st.file_uploader('Faça o upload do CSV', type=['csv'])
         elif tipo_arquivo == 'Txt':
             arquivo = st.file_uploader('Faça o upload do TXT', type=['txt'])
-        elif tipo_arquivo == 'Pasta':
-            arquivo = st.text_input('Digite o caminho da pasta (ex.: C:\\dados ou /home/ubuntu/dados)')
-            recursivo = st.checkbox('Ler subpastas recursivamente', value=True)
-            padrao = st.text_input('Extensões a considerar (separe por vírgula)', value='pdf,csv,txt,md')
-            st.session_state['pasta_recursivo'] = recursivo
-            st.session_state['pasta_exts'] = [e.strip().lower() for e in padrao.split(',') if e.strip()]
 
     with tabs[1]:
         provedor = st.selectbox('Selecione o provedor do modelo', CONFIG_MODELOS.keys())
@@ -196,3 +155,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
