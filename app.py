@@ -125,7 +125,7 @@ sugira ao usuário carregar novamente o Oráculo!
 
 
 def pagina_chat():
-    st.header('🤖 Max, seu assistente virtual na Fiscaltech', divider=True)
+    st.header('🤖 Bem-vindo ao Max', divider=True)
 
     chain = st.session_state.get('chain')
     if chain is None:
@@ -212,4 +212,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
